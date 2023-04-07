@@ -63,7 +63,7 @@
        (type-check e2 expected-type (dict-set ctx x1 T1)))]
     [`(,e : ,T)
      (let ([T-e (type-check e T ctx)])
-       (if (equal? T-e T)
+       (if (subtype? T-e T)
            T
            (error 'type-check "type mismatch: expected ~a, got ~a" T T-e)))]
     [`(,t1 ,t2)
