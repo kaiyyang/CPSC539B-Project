@@ -8,7 +8,7 @@
 ; e ::=               terms:
 ;   num               constant
 ;   x                 variables
-;   let x = e in e    let bindings (optional)
+;   (let x e e)       let bindings
 ;   (lambda x T e)    functions
 ;   (e x)             application
 ;   (e : T)           type-annotation
@@ -89,7 +89,8 @@
      #:when (is-primitive? v)
      (get-primitive-type v)]
     [`(lambda ,x ,T ,t)
-     (let ([T2 (type-infer t (dict-set ctx x T))])
+     (let* ([_ (check-type-wellness T)]
+            [T2 (type-infer t (dict-set ctx x T))])
        `(,T -> ,T2))]
     [`(,t1 ,t2)    ; (SYN-APP)
      (let ([T1 (type-infer t1 ctx)])
@@ -98,7 +99,7 @@
           (if (not (false? (type-check t2 T11 ctx)))
               T12
               (error 'type-infer "type infer error, SYN-APP fails type check"))]))]
-    [`(let ([,x ,e1]) ,e2)
+    [`(let ,x ,e1 ,e2)
      (let ([T1 (type-infer e1 ctx)])
        (type-infer e2 (dict-set ctx x T1)))]
     [x              ; SYN-VAR
@@ -146,7 +147,7 @@
      (match b
        ['Int #t]
        ['Bool #t]
-       [_ (error 'check-type-wellness "invalid base type ~a" b)])]
+       [_ (error 'check-type-wellness "invalid type ~a" type)])]
     [_ #f]))
 ; check if T1 is a subtype of T2
 ; T T -> Bool
@@ -265,7 +266,7 @@
 (define val-F 'False)
 (define val-fn-id-bool `(lambda x Bool x))
 (define val-fn-id-int `(lambda x Int x))
-(define add `(lambda x Int (lambda y Int )))
+(define add-fun `(((lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (= y 1)) (add x y))) 1) 0))
 
 
 
