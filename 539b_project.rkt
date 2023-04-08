@@ -12,11 +12,13 @@
 ;   (lambda x T e)    functions
 ;   (e x)             application
 ;   (e : T)           type-annotation
+;   add | sub         primitive operation 
 ;
 ; v ::=               values:
 ;   num               constant
 ;   True | False      boolean constants
 ;   (lambda x T e)    abstraction value
+;   add | sub         primitive functions
 ;
 ; b ::=               Atomic primitive type
 ;   Int               Integer
@@ -24,7 +26,7 @@
 ;
 ; T ::=               types:
 ;   b                 atomic primitive type
-;   T -> T            Funciton Type
+;   x : T -> T        Dependent Funciton Type
 ;  (Refi b x p)       Refinement Type
 
 ; p, q::=                Predicate
@@ -52,11 +54,12 @@
     ; CHK-LAM
     [`(lambda ,x ,T ,t)
      (match expected-type
-       [`(,T-in -> ,T-out)
-        (let ([T-term (type-check t (dict-set ctx x T) T-out)])
-          `(,T-in -> ,T-term))]
+       [`(,x_exp : ,T-in -> ,T-out)
+       #:when (eq? x_exp x)
+        (let ([T-term (type-check t T-out (dict-set ctx x T))])
+          `(,x : ,T-in -> ,T-term))]
        [_
-        (error 'type-check "type mismatch: expected ~a, got lambda" expected-type)])]
+        (error 'type-check "type mismatch: expected type: ~a, v: ~a" expected-type v)])]
     ; CHECK-LET
     [`(let ,x1 ,e1 ,e2)
      (let ([T1 (type-infer e1 ctx)])
@@ -84,20 +87,19 @@
      (if (and (check-type-wellness T) (type-check e T ctx))
          T
          (error 'type-infer "~a can not ascribe with type ~a" e T))]
-
     [v             ; SYN-CON
-     #:when (is-primitive? v)
-     (get-primitive-type v)]
+     #:when (is-primitive-value? v)
+     (prim v)]
     [`(lambda ,x ,T ,t)
      (let* ([_ (check-type-wellness T)]
             [T2 (type-infer t (dict-set ctx x T))])
-       `(,T -> ,T2))]
+       `(,x : ,T -> ,T2))]
     [`(,t1 ,t2)    ; (SYN-APP)
      (let ([T1 (type-infer t1 ctx)])
        (match T1
-         [`(,T11 -> ,T12)
+         [`(,x : ,T11 -> ,T12)
           (if (not (false? (type-check t2 T11 ctx)))
-              T12
+              (subst-type t2 x T12)
               (error 'type-infer "type infer error, SYN-APP fails type check"))]))]
     [`(let ,x ,e1 ,e2)
      (let ([T1 (type-infer e1 ctx)])
@@ -111,11 +113,19 @@
 ;; ============================ Helper functions =============================
 ; value -> Boolean
 ; check if the given value is primitive value
-(define (is-primitive? v)
+(define (is-primitive-value? v)
   (match v
     ['True #t]
     ['False #t]
     [v #:when(number? v) #t]
+    ['add #t]
+    ['sub #t]
+    [_ #f]))
+
+(define (is-base-type? type)
+  (match type
+    ['Int #t]
+    ['Bool #t]
     [_ #f]))
 
 (define (is-refi-type? type)
@@ -132,12 +142,14 @@
 ;     ['False 'Bool]
 ;     [_ (error 'primitive-type "invalid primitive type ~a" v)]))
 
-(define (get-primitive-type v)
+(define (prim v)
   (match v
-    [v #:when (number? v) `(Refi Int x (= x ,v))]
+    [v #:when (number? v) (let ([fresh (gensym 'x)]) `(Refi Int ,fresh (= ,fresh ,v)))]
     ['True `(Refi Bool x True)]
     ['False `(Refi Bool x False)]
-    [_ (error 'primitive-type "invalid primitive type ~a" v)]))
+    ['sub `(x : Int -> (y : Int -> (Refi Int v (= v (- x y)))))]
+    ['add `(x : Int -> (y : Int -> (Refi Int v (= v (+ x y)))))]
+    [_ (error 'primitive-type "invalid primitive type: ~a" v)]))
 
 (define (check-type-wellness type)
   (match type
@@ -154,12 +166,13 @@
 (define (subtype? T1 T2)
   (match (cons T1 T2)
     ; a refinement type will be a subtype of its base type
-    [`( ,T1 . ,T2)
-     #:when (and (is-refi-type? T1) (is-primitive? T2))
-     (match T1 [`(Refi ,x ,b ,p) (eq? b T2)])]
+    [`(,T1 . ,T2)
+     #:when (and (is-refi-type? T1) (is-base-type? T2))
+     (match T1 [`(Refi ,b ,x ,p) (eq? b T2)]
+               [_ (error 'subtype? "Here")])]
     [`(Int . ,T2) (eq? T2 'Int)] ; Int is only a subtype of Int
     [`(Bool . ,T2) (eq? T2 'Bool)] ; Bool is only a subtype of Bool
-    [`((,T1i1 -> ,T1i2) . (,T2i1 -> ,T2i2))
+    [`(,x1 : (,T1i1 -> ,T1i2) . (,x2 : ,T2i1 -> ,T2i2))
      ;T1 <: S1  S2 <: T2 ; S1 -> S2 <: T1 -> T2
      (and (subtype? T2i1 T1i1) (subtype? T1i2 T2i2))] ; T1 is a function type and T2 is also a function type, and the argument and return types of T1 are subtypes of those of T2
     [`((Refi ,b1 ,x1 ,p1) . (Refi ,b2 ,x2 ,p2))
@@ -170,6 +183,7 @@
          #f)]
     [_ #f]))
 
+;;  --------------- Substition 3.3.1 (Refinement Paper) ------------------
 ; substitude all instance of v2 with v1
 (define (subst-pred v1 v2 pred)
   (match pred
@@ -187,10 +201,20 @@
     [`(or ,p ...) `(or ,@(map (lambda (p) (subst-pred v1 v2 p)) p))]
     [`(if ,p1 ,p2 ,p3) `(if ,(subst-pred v1 v2 p1) ,(subst-pred v1 v2 p2) ,(subst-pred v1 v2 p3))]
     [`(+ ,p1 ,p2) `(+ ,(subst-pred v1 v2 p1) ,(subst-pred v1 v2 p2))]
-    [`(- ,p1 ,p2) `(+ ,(subst-pred v1 v2 p1) ,(subst-pred v1 v2 p2))]
+    [`(- ,p1 ,p2) `(- ,(subst-pred v1 v2 p1) ,(subst-pred v1 v2 p2))]
     [_ (error 'subst-pred "invalid predicate ~a" pred)]))
 
+; substitude the dependent type variable v2 with value v1 in Type T.
+(define (subst-type v1 v2 T)
+  (match T
+    [`(Refi, b ,v ,p) #:when (eq? v v2) T]
+    [`(Refi ,b ,v ,p) `(Refi ,b ,v ,(subst-pred v1 v2 p))]
+    [`(,x : ,s -> ,t) #:when (eq? v2 x) `(,x : ,(subst-type v1 v2 s) -> ,t)]
+    [`(,x : ,s -> ,t) `(,x : ,(subst-type v1 v2 s) -> ,(subst-type v1 v2 t))]
+    [b #:when (is-base-type? b) b]
+    [_ (error 'subt-type "invalid type substituion: want to subst ~a with ~a in ~a" v2 v1 T)]))
 
+;; -----------------------------------------------------------------------------------
 ; Use Rosette (z3) to check the constraints
 (define (check-constraint c ctx)
   (define (define-symbolic-ctx ctx)
@@ -262,11 +286,15 @@
    (check-equal? (check-constraint cst1 '()) #t "x = 5, y = x + 1, x >= 0 && y > x")))
 (run-test test-cases)
 
+
+; values
 (define val-T 'True)
 (define val-F 'False)
 (define val-fn-id-bool `(lambda x Bool x))
 (define val-fn-id-int `(lambda x Int x))
-(define add-fun `(((lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (= y 1)) (add x y))) 1) 0))
+(define val-fn-add `(lambda x Int (lambda y Int y)))
+
+; Type
 
 
 
@@ -274,16 +302,18 @@
 (define refi-prog0-good '((lambda x (Refi Int x (<= x 0)) x) -5))
 (define refi-prog1-good '((lambda x (Refi Bool x x) x) True))
 (define refi-prog1-bad '((lambda x (Refi Bool x (and x False)) x) True))
+(define refi-prog2-good '(let x 5 ((lambda y (Refi Int y (>= y 4)) y) x)))
+(define add-prog `(((lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (= y 1)) (add x y))) 1) 0))
 
 (define tests-basic
   (test-suite "test for basic type infer on STLC"
               (check-equal? (type-infer val-F '()) '(Refi Bool x False) "False")
               (check-equal? (type-infer val-T '()) '(Refi Bool x True) "True")
-              (check-equal? (type-infer val-fn-id-bool '()) '(Bool -> Bool) "boolean identity")
-              (check-equal? (type-infer val-fn-id-int '()) '(Int -> Int) "boolean identity")
-              (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '((Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
-              (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '((Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
-              (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '((Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
+              (check-equal? (type-infer val-fn-id-bool '()) '(x : Bool -> Bool) "boolean identity")
+              (check-equal? (type-infer val-fn-id-int '()) '(x : Int -> Int) "boolean identity")
+              (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '(x : (Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
+              (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '(x : (Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
+              (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '(x : (Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
               (check-equal? (type-infer refi-prog0-good '()) '(Refi Int x (<= x 0)) "refinement type good")
               (check-equal? (type-infer refi-prog1-good '()) '(Refi Bool x x) "refinement type good")))
 
