@@ -130,7 +130,7 @@
 
 (define (is-refi-type? type)
   (match type
-    [`(Refi ,b ,x ,p) #t]
+    [`(Refi ,b ,x ,p) (check-type-wellness type)]
     [_ #f]))
 
 ; value -> Base Type
@@ -232,7 +232,6 @@
     ['Bool (eval `(define-symbolic ,x boolean?))]
     [_ (error "Unsupported type ~a" T)]))
 
-; TODO: Compile the predicate to pass to rosette solver
 (define (compile-predicate p)
   (match p
     ['True #t]
