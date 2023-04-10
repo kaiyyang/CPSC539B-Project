@@ -4,32 +4,35 @@
 
 ;; ============================= Langauge Design =====================================
 ;
-; Term
-; e ::=               terms:
-;   num               constant
-;   x                 variables
-;   (let x e e)       let bindings
-;   (lambda x T e)    functions
-;   (e x)             application
-;   (e : T)           type-annotation
-;   add | sub         primitive operation 
-;
-; v ::=               values:
-;   num               constant
-;   True | False      boolean constants
-;   (lambda x T e)    abstraction value
-;   add | sub         primitive functions
-;
-; b ::=               Atomic primitive type
-;   Int               Integer
-;   Bool              Boolean
-;
-; T ::=               types:
-;   b                 atomic primitive type
-;   x : T -> T        Dependent Funciton Type
-;  (Refi b x p)       Refinement Type
+; e ::=                  Terms:
+;   v                    Values
+;   x                    Variables
+;   (let x e e)          Let bindings
+;   (lambda x T e)       Functions
+;   (e x)                Application
+;   (e : T)              Type-annotation
+;   (+ e e)              Addition
+;   (- e e)              Subtraction
+;   (* e e)              Multiplication
+;   (/ e e)              Division
 
-; p, q::=                Predicate
+;
+; v ::=                  Values:
+;   num                  (... -2,-1,0,1,2 ...)
+;   True | False         Boolean constants
+;   (lambda x T e)       Abstraction value
+;   add | sub            Primitive functions
+;
+; b ::=                  Atomic primitive type:
+;   Int                  Integer
+;   Bool                 Boolean
+;
+; T ::=                  Types:
+;   b                    Atomic primitive type
+;  (x : T -> T)          Dependent Funciton Type
+;  (Refi b x p)          Refinement Type
+
+; p, q::=                Predicate:
 ;  x                     variable
 ;  True | False          Boolean
 ;  Num
@@ -39,14 +42,14 @@
 ;  (not q)
 ;  (if p then p else p)
 ;
-; c ::=                  Constraints
-;   (forall x b p c)     implication
-;   (and c c)            conjunction
-;   p                    predicates
+; c ::=                  Constraints:
+;   (forall x b p c)     Implication
+;   (and c c)            Conjunction
+;   p                    Predicate
 ;
-;ctx ::=                 contexts
+; ctx ::=                Contexts:
 ;   '()                  empty context
-;   (dict-ref ctx x T)   term variable binding
+;    (dict-ref ctx x T)  Term variable binding
 
 ;; ================================= Bidirectional Type Checking ===================================
 (define (type-check v expected-type ctx)
@@ -55,12 +58,11 @@
     [`(lambda ,x ,T ,t)
      (match expected-type
        [`(,x_exp : ,T-in -> ,T-out)
-       #:when (eq? x_exp x)
+        #:when (eq? x_exp x)
         (let ([T-term (type-check t T-out (dict-set ctx x T))])
           `(,x : ,T-in -> ,T-term))]
-       [_
-        (error 'type-check "type mismatch: expected type: ~a, v: ~a" expected-type v)])]
-    ; CHECK-LET
+       [_ (error 'type-check "type mismatch: expected type: ~a, v: ~a" expected-type v)])]
+    ; CHK-LET
     [`(let ,x1 ,e1 ,e2)
      (let ([T1 (type-infer e1 ctx)])
        (type-check e2 expected-type (dict-set ctx x1 T1)))]
@@ -104,6 +106,15 @@
     [`(let ,x ,e1 ,e2)
      (let ([T1 (type-infer e1 ctx)])
        (type-infer e2 (dict-set ctx x T1)))]
+    ; [`(,op ,t1 ,t2)
+    ;   #:when (memq op '(+ - * /))
+    ;   (let* ([T1 (type-infer t1 ctx)]
+    ;          [T2 (type-infer t2 ctx)])
+    ;     (if (subtype? T1 T2)
+    ;         T2
+    ;         if (subtype? T2 T1)
+    ;             T1
+    ;             (error 'type-infer "type infer error, SYN-APP fails type check")))))]
     [x              ; SYN-VAR
      (if (dict-has-key? ctx x)
          (dict-ref ctx x)
@@ -133,18 +144,9 @@
     [`(Refi ,b ,x ,p) (check-type-wellness type)]
     [_ #f]))
 
-; value -> Base Type
-; check if the given primitive value is primitive type
-; (define (get-primitive-type v)
-;   (match v
-;     [v #:when (number? v)'Int]
-;     ['True 'Bool]
-;     ['False 'Bool]
-;     [_ (error 'primitive-type "invalid primitive type ~a" v)]))
-
 (define (prim v)
   (match v
-    [v #:when (number? v) (let ([fresh (gensym 'x)]) `(Refi Int ,fresh (= ,fresh ,v)))]
+    [v #:when (number? v) (let ([fresh 'x]) `(Refi Int ,fresh (= ,fresh ,v)))]
     ['True `(Refi Bool x True)]
     ['False `(Refi Bool x False)]
     ['sub `(x : Int -> (y : Int -> (Refi Int v (= v (- x y)))))]
@@ -161,30 +163,31 @@
        ['Bool #t]
        [_ (error 'check-type-wellness "invalid type ~a" type)])]
     [_ #f]))
+
 ; check if T1 is a subtype of T2
-; T T -> Bool
 (define (subtype? T1 T2)
   (match (cons T1 T2)
     ; a refinement type will be a subtype of its base type
     [`(,T1 . ,T2)
      #:when (and (is-refi-type? T1) (is-base-type? T2))
      (match T1 [`(Refi ,b ,x ,p) (eq? b T2)]
-               [_ (error 'subtype? "Here")])]
+       [_ (error 'subtype? "Here")])]
     [`(Int . ,T2) (eq? T2 'Int)] ; Int is only a subtype of Int
     [`(Bool . ,T2) (eq? T2 'Bool)] ; Bool is only a subtype of Bool
-    [`(,x1 : (,T1i1 -> ,T1i2) . (,x2 : ,T2i1 -> ,T2i2))
-     ;T1 <: S1  S2 <: T2 ; S1 -> S2 <: T1 -> T2
-     (and (subtype? T2i1 T1i1) (subtype? T1i2 T2i2))] ; T1 is a function type and T2 is also a function type, and the argument and return types of T1 are subtypes of those of T2
+    [`((,x1 : ,s1 -> ,t1) . (,x2 : ,s2 -> ,t2))
+     ; SUB-FUN
+     (and (subtype? s2 s1) (subtype? (subst-type x2 x1 t1) t2))]
     [`((Refi ,b1 ,x1 ,p1) . (Refi ,b2 ,x2 ,p2))
      ; SUB-BASE
      (if (eq? b1 b2)
          ;  Generate the VC and check the Constraints
-         (check-constraint `(forall ,x2 ,b2 ,p2 ,(subst-pred x2 x1 p1)) '())
+         (check-constraint `(forall ,x1 ,b1 ,p1 ,(subst-pred x1 x2 p2)) '())
          #f)]
-    [_ #f]))
+    [_ (error 'subtype? "invalid type ~a" (cons T1 T2))]))
+
 
 ;;  --------------- Substition 3.3.1 (Refinement Paper) ------------------
-; substitude all instance of v2 with v1
+; substitude all instance of v2 with v1 in predicate
 (define (subst-pred v1 v2 pred)
   (match pred
     ['True 'True]
@@ -204,17 +207,18 @@
     [`(- ,p1 ,p2) `(- ,(subst-pred v1 v2 p1) ,(subst-pred v1 v2 p2))]
     [_ (error 'subst-pred "invalid predicate ~a" pred)]))
 
-; substitude the dependent type variable v2 with value v1 in Type T.
+; all free occurrences of v2 are substituted with v1 in Type T.
 (define (subst-type v1 v2 T)
   (match T
+    [b #:when (is-base-type? b) b]
+    [v #:when (eq? v v2) v1]
     [`(Refi, b ,v ,p) #:when (eq? v v2) T]
     [`(Refi ,b ,v ,p) `(Refi ,b ,v ,(subst-pred v1 v2 p))]
     [`(,x : ,s -> ,t) #:when (eq? v2 x) `(,x : ,(subst-type v1 v2 s) -> ,t)]
     [`(,x : ,s -> ,t) `(,x : ,(subst-type v1 v2 s) -> ,(subst-type v1 v2 t))]
-    [b #:when (is-base-type? b) b]
     [_ (error 'subt-type "invalid type substituion: want to subst ~a with ~a in ~a" v2 v1 T)]))
 
-;; -----------------------------------------------------------------------------------
+;; ----------------------------------------------------------------------------------
 ; Use Rosette (z3) to check the constraints
 (define (check-constraint c ctx)
   (define (define-symbolic-ctx ctx)
@@ -254,9 +258,7 @@
   (match c
     [`(forall ,x ,T ,p ,c^) #:when (memq T '(Int Bool))
                             (let ([ctx^ (begin (define-symbolic-func x T) (dict-set ctx x T))])
-                              `(and ,(compile-predicate p) ,(compile-constraint c^ ctx^)))]
-    [`(forall ,x ,T ,p ,c) #:when !(memq T '(Int Bool))
-                           (error 'check-constraint "invalid forall constraints on Non-Basic Type: ~a" T)]
+                              `(forall (list ,x) (=> ,(compile-predicate p) ,(compile-constraint c^ ctx^))))]
     [`(and ,c1 ,c2) `(and ,(compile-constraint c1 ctx) ,(compile-constraint c2 ctx))]
     [p (compile-predicate p)]
     [_ (error 'check-constraint "invalid constraint ~a" c)]))
@@ -298,11 +300,16 @@
 
 
 (define refi-prog0-bad '((lambda x (Refi Int x (<= x 0)) x) 5))
-(define refi-prog0-good '((lambda x (Refi Int x (<= x 0)) x) -5))
-(define refi-prog1-good '((lambda x (Refi Bool x x) x) True))
 (define refi-prog1-bad '((lambda x (Refi Bool x (and x False)) x) True))
-(define refi-prog2-good '(let x 5 ((lambda y (Refi Int y (>= y 4)) y) x)))
-(define add-prog `(((lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (= y 1)) (add x y))) 1) 0))
+
+
+(define refi-app1-good '((lambda x (Refi Int x (<= x 0)) x) -5))
+(define refi-ascr-good '(-5 : (Refi Int x (<= x 0))))
+(define refi-app2-good '((lambda x (Refi Bool x True) x) True))
+
+
+(define refi-let-good '(let x 5 ((lambda y (Refi Int y (>= y 4)) y) x)))
+(define add-prog `(lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int x (= y 1)) ((add x) y))))
 
 (define tests-basic
   (test-suite "test for basic type infer on STLC"
@@ -313,7 +320,24 @@
               (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '(x : (Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
               (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '(x : (Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
               (check-equal? (type-infer '(lambda x (Refi Int x (<= x 0)) x) '()) '(x : (Refi Int x (<= x 0)) -> (Refi Int x (<= x 0))) "Basic lambda on refinment type")
-              (check-equal? (type-infer refi-prog0-good '()) '(Refi Int x (<= x 0)) "refinement type good")
-              (check-equal? (type-infer refi-prog1-good '()) '(Refi Bool x x) "refinement type good")))
+              (check-equal? (type-infer refi-app1-good '()) '(Refi Int x (<= x 0)) "refinement type good")
+              (check-equal? (type-infer refi-app2-good '()) '(Refi Bool x True) "refinement type good")))
 
 (run-test tests-basic)
+
+; Program for Demo
+
+
+
+; (type-infer 'add '())
+; (type-infer 'sub '())
+; (type-infer '(let f (lambda x Int (lambda y Int ((add x) y))) (let x 5 (f x))) '())
+; (type-infer '(let f (lambda x (Refi Int x (>= x 0)) (lambda y Int ((add x) y))) (let x 5 (f x))) '())
+; (type-infer '(let f (lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (>= y 10)) ((add x) y))) f) '())
+
+;; Expect True
+; (subtype? '(x : (Refi Int x (>= x 0)) -> (Refi Int x (>= x 10))) '(x : (Refi Int x (>= x 1)) -> (Refi Int x (>= x -10))))
+;; Expect False
+; (subtype? '(x : (Refi Int x (>= x 0)) -> (Refi Int x (>= x 10))) '(x : (Refi Int x (>= x -1)) -> (Refi Int x (>= x -10))))
+;; Expect False
+; (subtype? '(x : (Refi Int x (>= x 0)) -> (Refi Int x (>= x -10))) '(x : (Refi Int x (>= x 1)) -> (Refi Int x (>= x 10))))
