@@ -11,10 +11,6 @@
 ;   (lambda x T e)       Functions
 ;   (e x)                Application
 ;   (e : T)              Type-annotation
-;   (+ e e)              Addition
-;   (- e e)              Subtraction
-;   (* e e)              Multiplication
-;   (/ e e)              Division
 
 ;
 ; v ::=                  Values:
@@ -106,15 +102,6 @@
     [`(let ,x ,e1 ,e2)
      (let ([T1 (type-infer e1 ctx)])
        (type-infer e2 (dict-set ctx x T1)))]
-    ; [`(,op ,t1 ,t2)
-    ;   #:when (memq op '(+ - * /))
-    ;   (let* ([T1 (type-infer t1 ctx)]
-    ;          [T2 (type-infer t2 ctx)])
-    ;     (if (subtype? T1 T2)
-    ;         T2
-    ;         if (subtype? T2 T1)
-    ;             T1
-    ;             (error 'type-infer "type infer error, SYN-APP fails type check")))))]
     [x              ; SYN-VAR
      (if (dict-has-key? ctx x)
          (dict-ref ctx x)
@@ -249,16 +236,20 @@
     [`(not ,p1) `(not ,(compile-predicate p1))]
     [`(and ,p ...) `(and ,@(map compile-predicate p))]
     [`(or ,p ...) `(or ,@(map compile-predicate p))]
-    [`(if ,p1 ,p2 ,p3) `(if ,(compile-predicate p1) ,(compile-predicate p2) ,(compile-predicate p3))]
+    [`(if ,p1 ,p2 ,p3)
+     `(if ,(compile-predicate p1)
+          ,(compile-predicate p2)
+          ,(compile-predicate p3))]
     [`(+ ,p1 ,p2) `(+ ,(compile-predicate p1) ,(compile-predicate p2))]
     [`(- ,p1 ,p2) `(+ ,(compile-predicate p1) ,(compile-predicate p2))]
     [_ (error 'check-constraint "invalid predicate ~a" p)]))
 
 (define (compile-constraint c ctx)
   (match c
-    [`(forall ,x ,T ,p ,c^) #:when (memq T '(Int Bool))
-                            (let ([ctx^ (begin (define-symbolic-func x T) (dict-set ctx x T))])
-                              `(forall (list ,x) (=> ,(compile-predicate p) ,(compile-constraint c^ ctx^))))]
+    [`(forall ,x ,T ,p ,c^)
+     #:when (memq T '(Int Bool))
+     (let ([ctx^ (begin (define-symbolic-func x T) (dict-set ctx x T))])
+       `(forall (list ,x) (=> ,(compile-predicate p) ,(compile-constraint c^ ctx^))))]
     [`(and ,c1 ,c2) `(and ,(compile-constraint c1 ctx) ,(compile-constraint c2 ctx))]
     [p (compile-predicate p)]
     [_ (error 'check-constraint "invalid constraint ~a" c)]))
@@ -326,18 +317,43 @@
 (run-test tests-basic)
 
 ; Program for Demo
-
-
-
+; PART 1
+; (type-infer 1 '())
 ; (type-infer 'add '())
 ; (type-infer 'sub '())
+
+; (type-infer '(lambda x (Refi Int x (>= x 0)) (add x)) '())
+; (type-infer '(lambda x (Refi Int x (>= x 2)) (sub x)) '())
+
 ; (type-infer '(let f (lambda x Int (lambda y Int ((add x) y))) (let x 5 (f x))) '())
 ; (type-infer '(let f (lambda x (Refi Int x (>= x 0)) (lambda y Int ((add x) y))) (let x 5 (f x))) '())
 ; (type-infer '(let f (lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (>= y 10)) ((add x) y))) f) '())
 
+; PART 2
 ;; Expect True
 ; (subtype? '(x : (Refi Int x (>= x 0)) -> (Refi Int x (>= x 10))) '(x : (Refi Int x (>= x 1)) -> (Refi Int x (>= x -10))))
 ;; Expect False
 ; (subtype? '(x : (Refi Int x (>= x 0)) -> (Refi Int x (>= x 10))) '(x : (Refi Int x (>= x -1)) -> (Refi Int x (>= x -10))))
 ;; Expect False
 ; (subtype? '(x : (Refi Int x (>= x 0)) -> (Refi Int x (>= x -10))) '(x : (Refi Int x (>= x 1)) -> (Refi Int x (>= x 10))))
+
+
+; PART 3
+; (type-infer '((lambda x (Refi Int x (>= x 0)) x) 5) '())
+
+
+; (define func '(lambda x (Refi Int x (>= x 0)) x))
+; (define apply-function-good '(lambda f (x : (Refi Int x (>= x 1)) -> (Refi Int x (>= x -10))) (lambda n (Refi Int x (>= x 2)) (f n))))
+; (type-infer `(,apply-function-good ,func) '())
+
+; (define apply-function-bad '(lambda f (x : (Refi Int x (>= x 1)) -> (Refi Int x (>= x 10))) (lambda n (Refi Int x (>= x 2)) (f n))))
+; (type-infer `(,apply-function-bad ,func) '())
+
+
+; PART 4
+; Problem
+; This should be a existential type, since my substitution on typing rules don't substitude right handside
+; (type-infer '(let f (lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (>= y 0)) ((add x) y))) (let x 2 (let y 3 ((f x) y)))) '())
+
+
+; (type-infer '(let f (lambda x (Refi Int x (>= x 0)) (lambda y (Refi Int y (>= y 0)) ((add x) y))) ((f 3) 4)) '())
